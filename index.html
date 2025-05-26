@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Image Background Removal Tool</title>
+  <link rel="stylesheet" href="./src/style.css">
+</head>
+<body>
+  <header>
+    <h1>Image Background Removal Tool</h1>
+  </header>
+  
+  <main>
+    <div class="upload-container">
+      <label for="image-upload" class="upload-label">
+        <div class="upload-icon">+</div>
+        <div>Upload Images (Select Multiple)</div>
+      </label>
+      <input type="file" id="image-upload" accept="image/*" multiple>
+    </div>
+
+    <div class="tools-container">
+      <div class="tool-group">
+        <h3>Background Removal</h3>
+        <button id="remove-bg" class="tool-btn">Remove Background</button>
+      </div>
+      
+      <div class="tool-group">
+        <h3>Magic Brush</h3>
+        <button id="magic-remove" class="tool-btn">Remove Object</button>
+        <button id="magic-restore" class="tool-btn">Restore Area</button>
+      </div>
+      
+      <div class="tool-group">
+        <h3>Effects</h3>
+        <button id="add-shadow" class="tool-btn">Add Shadow</button>
+        <button id="blur-bg" class="tool-btn">Blur Background</button>
+      </div>
+      
+      <div class="tool-group">
+        <h3>Actions</h3>
+        <button id="download" class="tool-btn primary">Download All</button>
+        <button id="reset" class="tool-btn secondary">Reset</button>
+      </div>
+    </div>
+
+    <div class="editor-container">
+      <div class="canvas-container">
+        <canvas id="editor-canvas"></canvas>
+      </div>
+      
+      <div class="thumbnails-container" id="thumbnails">
+        <!-- Thumbnails will be added here dynamically -->
+      </div>
+    </div>
+    
+    <div class="instructions">
+      <h3>How to use:</h3>
+      <ol>
+        <li>Upload one or more images</li>
+        <li>Select an image from the thumbnails</li>
+        <li>Use the tools to edit your image</li>
+        <li>Download the processed images</li>
+      </ol>
+    </div>
+  </main>
+
+  <div id="loading-overlay" class="hidden">
+    <div class="spinner"></div>
+    <div class="loading-text">Processing...</div>
+  </div>
+
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
