@@ -220,7 +220,7 @@ function init() {
     });
   }
   
-  // Enhanced background removal with sophisticated detection
+  // Production-ready background removal
   function removeBackground() {
     if (currentImageIndex === -1) {
       showToast('Please select an image first', 'error');
@@ -255,17 +255,9 @@ function init() {
           
           // Get image data
           const imageData = tempCtx.getImageData(0, 0, tempCanvas.width, tempCanvas.height);
-          const data = imageData.data;
           
-          // Enhanced background detection with clothing and skin preservation
-          const backgroundMask = improvedBackgroundDetection(data, tempCanvas.width, tempCanvas.height);
-          
-          // Apply the mask to the image
-          for (let i = 0; i < data.length; i += 4) {
-            if (backgroundMask[i/4]) {
-              data[i + 3] = 0; // Make pixel transparent
-            }
-          }
+          // Apply production-ready background removal
+          removeBackgroundPro(imageData, tempCanvas.width, tempCanvas.height);
           
           // Put the modified image data back
           tempCtx.putImageData(imageData, 0, 0);
@@ -312,819 +304,710 @@ function init() {
         hideLoading();
         showToast('Failed to remove background', 'error');
       }
-    }, 1000);
+    }, 500);
   }
   
-  // Improved background detection algorithm with clothing and skin preservation
-  function improvedBackgroundDetection(imageData, width, height) {
-    // 1. Sample points from the edges only
-    const sampledColors = sampleEdgesOnly(imageData, width, height);
+  // Production-ready background removal algorithm
+  function removeBackgroundPro(imageData, width, height) {
+    const data = imageData.data;
     
-    // 2. Group similar colors and find dominant background colors
-    const dominantColors = findDominantColors(sampledColors);
+    // Step 1: Create a binary mask for the image
+    const mask = createInitialMask(data, width, height);
     
-    // 3. Create initial background mask
-    const initialMask = createInitialBackgroundMask(imageData, width, height, dominantColors);
+    // Step 2: Apply GrabCut-inspired segmentation
+    refineSegmentation(mask, data, width, height);
     
-    // 4. Detect skin tones
-    const skinToneMask = detectSkinTones(imageData, width, height);
+    // Step 3: Apply the mask to the image
+    applyMaskToImage(mask, data, width, height);
     
-    // 5. Detect clothing
-    const clothingMask = detectClothing(imageData, width, height);
-    
-    // 6. Combine all masks and refine
-    return refineCompositeMask(initialMask, skinToneMask, clothingMask, imageData, width, height);
+    // Step 4: Post-process the result
+    postProcessResult(data, width, height);
   }
   
-  // Sample colors from edges only
-  function sampleEdgesOnly(imageData, width, height) {
-    const sampledColors = [];
-    const samplesPerEdge = 80; // Increased for better sampling
-    const edgeDepth = Math.max(5, Math.floor(Math.min(width, height) * 0.03)); // Sample from outer 3% of image
+  // Create initial mask using color-based segmentation
+  function createInitialMask(data, width, height) {
+    const totalPixels = width * height;
+    const mask = new Uint8Array(totalPixels);
     
-    // Sample top edge
-    for (let i = 0; i < samplesPerEdge; i++) {
-      const x = Math.floor(width * (i / (samplesPerEdge - 1)));
-      for (let d = 0; d < edgeDepth; d++) {
-        sampledColors.push(getPixelColor(imageData, x, d, width));
+    // First pass: Mark edges as background
+    const edgeWidth = Math.max(10, Math.floor(Math.min(width, height) * 0.03));
+    
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (y * width + x);
+        
+        // Mark edges as definite background (0)
+        if (x < edgeWidth || x >= width - edgeWidth || 
+            y < edgeWidth || y >= height - edgeWidth) {
+          mask[idx] = 0; // Definite background
+        } else {
+          mask[idx] = 2; // Probable foreground
+        }
       }
     }
     
-    // Sample bottom edge
-    for (let i = 0; i < samplesPerEdge; i++) {
-      const x = Math.floor(width * (i / (samplesPerEdge - 1)));
-      for (let d = 0; d < edgeDepth; d++) {
-        sampledColors.push(getPixelColor(imageData, x, height - 1 - d, width));
-      }
-    }
+    // Second pass: Detect likely background based on color similarity to edges
+    const edgeColors = sampleEdgeColors(data, width, height, edgeWidth);
     
-    // Sample left edge
-    for (let i = 0; i < samplesPerEdge; i++) {
-      const y = Math.floor(height * (i / (samplesPerEdge - 1)));
-      for (let d = 0; d < edgeDepth; d++) {
-        sampledColors.push(getPixelColor(imageData, d, y, width));
-      }
-    }
-    
-    // Sample right edge
-    for (let i = 0; i < samplesPerEdge; i++) {
-      const y = Math.floor(height * (i / (samplesPerEdge - 1)));
-      for (let d = 0; d < edgeDepth; d++) {
-        sampledColors.push(getPixelColor(imageData, width - 1 - d, y, width));
-      }
-    }
-    
-    return sampledColors;
-  }
-  
-  // Find dominant colors using weighted color grouping
-  function findDominantColors(sampledColors) {
-    // Filter out fully transparent pixels
-    const validColors = sampledColors.filter(color => color.a > 0);
-    if (validColors.length === 0) return [];
-    
-    // Group similar colors
-    const colorGroups = [];
-    
-    for (const color of validColors) {
-      let foundGroup = false;
+    for (let i = 0; i < totalPixels; i++) {
+      if (mask[i] === 0) continue; // Skip already marked background
       
-      for (const group of colorGroups) {
-        // Use perceptual color distance with a tighter threshold
-        if (perceptualColorDistance(color, group.representative) < 20) {
-          group.colors.push(color);
-          group.count++;
+      const pixelIdx = i * 4;
+      const pixelColor = {
+        r: data[pixelIdx],
+        g: data[pixelIdx + 1],
+        b: data[pixelIdx + 2]
+      };
+      
+      // Check if pixel is similar to edge colors
+      for (const edgeColor of edgeColors) {
+        const colorDistance = getColorDistance(pixelColor, edgeColor);
+        if (colorDistance < 30) {
+          mask[i] = 0; // Mark as background
+          break;
+        }
+      }
+    }
+    
+    // Third pass: Detect clothing and text
+    detectClothingAndText(mask, data, width, height);
+    
+    return mask;
+  }
+  
+  // Sample colors from the edges of the image
+  function sampleEdgeColors(data, width, height, edgeWidth) {
+    const edgeColors = [];
+    const sampleStep = Math.max(1, Math.floor(Math.min(width, height) / 30));
+    
+    // Sample top and bottom edges
+    for (let x = 0; x < width; x += sampleStep) {
+      // Top edge
+      for (let y = 0; y < edgeWidth; y += sampleStep) {
+        const idx = (y * width + x) * 4;
+        edgeColors.push({
+          r: data[idx],
+          g: data[idx + 1],
+          b: data[idx + 2]
+        });
+      }
+      
+      // Bottom edge
+      for (let y = height - edgeWidth; y < height; y += sampleStep) {
+        const idx = (y * width + x) * 4;
+        edgeColors.push({
+          r: data[idx],
+          g: data[idx + 1],
+          b: data[idx + 2]
+        });
+      }
+    }
+    
+    // Sample left and right edges
+    for (let y = edgeWidth; y < height - edgeWidth; y += sampleStep) {
+      // Left edge
+      for (let x = 0; x < edgeWidth; x += sampleStep) {
+        const idx = (y * width + x) * 4;
+        edgeColors.push({
+          r: data[idx],
+          g: data[idx + 1],
+          b: data[idx + 2]
+        });
+      }
+      
+      // Right edge
+      for (let x = width - edgeWidth; x < width; x += sampleStep) {
+        const idx = (y * width + x) * 4;
+        edgeColors.push({
+          r: data[idx],
+          g: data[idx + 1],
+          b: data[idx + 2]
+        });
+      }
+    }
+    
+    // Cluster the edge colors to find dominant colors
+    return clusterColors(edgeColors, 30);
+  }
+  
+  // Cluster colors to find dominant colors
+  function clusterColors(colors, threshold = 25, maxClusters = 5) {
+    if (colors.length === 0) return [];
+    
+    const clusters = [];
+    
+    for (const color of colors) {
+      let foundCluster = false;
+      
+      for (const cluster of clusters) {
+        const distance = getColorDistance(color, cluster.center);
+        if (distance < threshold) {
+          // Add to existing cluster
+          cluster.colors.push(color);
+          cluster.count++;
           
-          // Update the representative color (weighted average)
-          const totalColors = group.colors.length;
-          group.representative = {
-            r: Math.round((group.representative.r * (totalColors - 1) + color.r) / totalColors),
-            g: Math.round((group.representative.g * (totalColors - 1) + color.g) / totalColors),
-            b: Math.round((group.representative.b * (totalColors - 1) + color.b) / totalColors),
-            a: Math.round((group.representative.a * (totalColors - 1) + color.a) / totalColors)
+          // Update center (average)
+          cluster.center = {
+            r: Math.round((cluster.center.r * (cluster.count - 1) + color.r) / cluster.count),
+            g: Math.round((cluster.center.g * (cluster.count - 1) + color.g) / cluster.count),
+            b: Math.round((cluster.center.b * (cluster.count - 1) + color.b) / cluster.count)
           };
           
-          foundGroup = true;
+          foundCluster = true;
           break;
         }
       }
       
-      if (!foundGroup) {
-        colorGroups.push({
-          representative: { ...color },
+      if (!foundCluster) {
+        // Create new cluster
+        clusters.push({
+          center: { ...color },
           colors: [color],
           count: 1
         });
       }
     }
     
-    // Sort groups by count (descending)
-    colorGroups.sort((a, b) => b.count - a.count);
+    // Sort clusters by count (descending)
+    clusters.sort((a, b) => b.count - a.count);
     
-    // Calculate total weight
-    const totalSamples = validColors.length;
-    
-    // Select dominant colors (groups that represent at least 8% of samples)
-    // Using a lower threshold to be more inclusive about background colors
-    const dominantColors = colorGroups
-      .filter(group => (group.count / totalSamples) >= 0.08)
-      .map(group => group.representative);
-    
-    return dominantColors;
+    // Return centers of the top clusters
+    return clusters.slice(0, maxClusters).map(cluster => cluster.center);
   }
   
-  // Create initial background mask
-  function createInitialBackgroundMask(imageData, width, height, dominantColors) {
-    const totalPixels = width * height;
-    const mask = new Array(totalPixels).fill(false);
-    
-    // If no dominant colors found, return empty mask
-    if (dominantColors.length === 0) return mask;
-    
-    // Process each pixel
-    for (let i = 0; i < totalPixels; i++) {
-      const pixelIndex = i * 4;
-      const pixelColor = {
-        r: imageData[pixelIndex],
-        g: imageData[pixelIndex + 1],
-        b: imageData[pixelIndex + 2],
-        a: imageData[pixelIndex + 3]
-      };
-      
-      // Skip fully transparent pixels
-      if (pixelColor.a === 0) {
-        mask[i] = true;
-        continue;
-      }
-      
-      // Check if pixel is similar to any dominant color
-      let minDistance = 255;
-      for (const dominantColor of dominantColors) {
-        const distance = perceptualColorDistance(pixelColor, dominantColor);
-        minDistance = Math.min(minDistance, distance);
-      }
-      
-      // More aggressive background detection
-      if (minDistance < 25) {
-        mask[i] = true;
-      }
-    }
-    
-    return mask;
-  }
-  
-  // Detect skin tones in the image
-  function detectSkinTones(imageData, width, height) {
-    const totalPixels = width * height;
-    const skinMask = new Array(totalPixels).fill(false);
-    
-    // Process each pixel
-    for (let i = 0; i < totalPixels; i++) {
-      const pixelIndex = i * 4;
-      const r = imageData[pixelIndex];
-      const g = imageData[pixelIndex + 1];
-      const b = imageData[pixelIndex + 2];
-      const a = imageData[pixelIndex + 3];
-      
-      // Skip transparent pixels
-      if (a === 0) continue;
-      
-      // Convert to HSV for better skin tone detection
-      const hsv = rgbToHsv(r, g, b);
-      
-      // Skin tone detection rules (covers various skin tones)
-      // These ranges are expanded to cover more skin tones
-      if (
-        // Light to medium skin tones
-        (hsv.h >= 0 && hsv.h <= 50 && hsv.s >= 0.1 && hsv.s <= 0.8 && hsv.v >= 0.35 && hsv.v <= 0.95) ||
-        // Darker skin tones
-        (hsv.h >= 0 && hsv.h <= 35 && hsv.s >= 0.1 && hsv.s <= 0.8 && hsv.v >= 0.2 && hsv.v <= 0.8)
-      ) {
-        // Additional check: R > G > B pattern common in skin tones
-        if (r > g && g > b) {
-          skinMask[i] = true;
-        }
-      }
-    }
-    
-    // Apply morphological operations to clean up the skin mask
-    let refinedSkinMask = dilate(skinMask, width, height);
-    refinedSkinMask = erode(refinedSkinMask, width, height);
-    
-    // Connect nearby skin regions
-    refinedSkinMask = dilate(refinedSkinMask, width, height);
-    refinedSkinMask = dilate(refinedSkinMask, width, height);
-    refinedSkinMask = erode(refinedSkinMask, width, height);
-    
-    return refinedSkinMask;
-  }
-  
-  // RGB to HSV conversion
-  function rgbToHsv(r, g, b) {
-    r /= 255;
-    g /= 255;
-    b /= 255;
-    
-    const max = Math.max(r, g, b);
-    const min = Math.min(r, g, b);
-    const delta = max - min;
-    
-    let h, s, v;
-    
-    // Calculate hue
-    if (delta === 0) {
-      h = 0;
-    } else if (max === r) {
-      h = ((g - b) / delta) % 6;
-    } else if (max === g) {
-      h = (b - r) / delta + 2;
-    } else {
-      h = (r - g) / delta + 4;
-    }
-    
-    h = Math.round(h * 60);
-    if (h < 0) h += 360;
-    
-    // Calculate saturation
-    s = max === 0 ? 0 : delta / max;
-    
-    // Calculate value
-    v = max;
-    
-    return { h, s, v };
-  }
-  
-  // Detect clothing in the image
-  function detectClothing(imageData, width, height) {
-    const totalPixels = width * height;
-    const clothingMask = new Array(totalPixels).fill(false);
-    
-    // First pass: detect potential clothing areas based on texture and color
-    for (let i = 0; i < totalPixels; i++) {
-      const pixelIndex = i * 4;
-      const r = imageData[pixelIndex];
-      const g = imageData[pixelIndex + 1];
-      const b = imageData[pixelIndex + 2];
-      const a = imageData[pixelIndex + 3];
-      
-      // Skip transparent pixels
-      if (a === 0) continue;
-      
-      const x = i % width;
-      const y = Math.floor(i / width);
-      
-      // Skip edge pixels
-      if (x < 5 || x >= width - 5 || y < 5 || y >= height - 5) continue;
-      
-      // Check for white/light clothing
-      const brightness = (r + g + b) / 3;
-      if (brightness > 180) {
-        // For white/light areas, check if it's part of a continuous region
-        if (isPartOfContinuousRegion(i, imageData, width, height, 180)) {
-          clothingMask[i] = true;
-        }
-      }
-      
-      // Check for textured areas (like fabric)
-      if (isTexturedRegion(i, imageData, width, height)) {
-        clothingMask[i] = true;
-      }
-      
-      // Check for high contrast areas (like text or graphics on clothing)
-      if (isHighContrastArea(i, imageData, width, height)) {
-        clothingMask[i] = true;
-      }
-    }
-    
-    // Apply morphological operations to clean up the clothing mask
-    let refinedClothingMask = dilate(clothingMask, width, height);
-    refinedClothingMask = erode(refinedClothingMask, width, height);
-    
-    // Connect nearby clothing regions
-    refinedClothingMask = dilate(refinedClothingMask, width, height);
-    refinedClothingMask = dilate(refinedClothingMask, width, height);
-    refinedClothingMask = erode(refinedClothingMask, width, height);
-    
-    return refinedClothingMask;
-  }
-  
-  // Check if a pixel is part of a textured region (like fabric)
-  function isTexturedRegion(idx, imageData, width, height) {
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    
-    // Get center pixel color
-    const centerColor = getPixelColor(imageData, x, y, width);
-    
-    // Calculate texture variance in a 5x5 neighborhood
-    let varianceSum = 0;
-    let sampleCount = 0;
-    
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        
-        const nx = x + dx;
-        const ny = y + dy;
-        
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          const neighborColor = getPixelColor(imageData, nx, ny, width);
-          const colorDiff = perceptualColorDistance(centerColor, neighborColor);
-          varianceSum += colorDiff;
-          sampleCount++;
-        }
-      }
-    }
-    
-    // Calculate average variance
-    const avgVariance = varianceSum / sampleCount;
-    
-    // Texture has moderate variance - not too smooth, not too chaotic
-    return avgVariance > 5 && avgVariance < 25;
-  }
-  
-  // Combine and refine all masks
-  function refineCompositeMask(initialMask, skinMask, clothingMask, imageData, width, height) {
-    const totalPixels = width * height;
-    const compositeMask = new Array(totalPixels).fill(false);
-    
-    // First, flood fill from definite background regions
-    const floodFilledBackground = floodFillBackground(initialMask, width, height);
-    
-    // Combine all information
-    for (let i = 0; i < totalPixels; i++) {
-      // If it's skin or clothing, preserve it
-      if (skinMask[i] || clothingMask[i]) {
-        compositeMask[i] = false; // Not background, preserve
-      } 
-      // If it's definite background from flood fill, remove it
-      else if (floodFilledBackground[i]) {
-        compositeMask[i] = true; // Background, remove
-      }
-      // For uncertain areas, use additional heuristics
-      else {
-        const x = i % width;
-        const y = Math.floor(i / width);
-        
-        // If it's near the edge, likely background
-        if (x < 10 || x >= width - 10 || y < 10 || y >= height - 10) {
-          compositeMask[i] = true;
-        }
-        // If it's surrounded by background, likely background
-        else if (isSurroundedByBackground(i, floodFilledBackground, width, height)) {
-          compositeMask[i] = true;
-        }
-        // If it's part of a small isolated region, likely background
-        else if (!isPartOfLargeRegion(i, floodFilledBackground, width, height)) {
-          compositeMask[i] = true;
-        }
-        // Otherwise, preserve it
-        else {
-          compositeMask[i] = false;
-        }
-      }
-    }
-    
-    // Final cleanup with morphological operations
-    let finalMask = compositeMask;
-    
-    // Close small holes
-    finalMask = dilate(finalMask, width, height);
-    finalMask = erode(finalMask, width, height);
-    
-    // Remove small isolated background regions
-    finalMask = erode(finalMask, width, height);
-    finalMask = dilate(finalMask, width, height);
-    
-    // Ensure edges are properly removed
-    finalMask = ensureEdgesRemoved(finalMask, width, height);
-    
-    return finalMask;
-  }
-  
-  // Check if a pixel is surrounded by background
-  function isSurroundedByBackground(idx, backgroundMask, width, height) {
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    
-    let backgroundCount = 0;
-    let totalChecked = 0;
-    
-    // Check in a 5x5 neighborhood
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        
-        const nx = x + dx;
-        const ny = y + dy;
-        
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          totalChecked++;
-          if (backgroundMask[ny * width + nx]) {
-            backgroundCount++;
-          }
-        }
-      }
-    }
-    
-    // If more than 70% of neighbors are background, consider it surrounded
-    return backgroundCount > totalChecked * 0.7;
-  }
-  
-  // Check if a pixel is part of a large region
-  function isPartOfLargeRegion(idx, backgroundMask, width, height) {
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    
-    // If this pixel is already marked as background, it's not part of a foreground region
-    if (backgroundMask[idx]) return false;
-    
-    // Flood fill to find the size of the connected region
-    const visited = new Array(width * height).fill(false);
-    let regionSize = 0;
-    const queue = [{x, y}];
-    visited[idx] = true;
-    
-    while (queue.length > 0 && regionSize < 500) { // Stop early if region is large enough
-      const current = queue.shift();
-      regionSize++;
-      
-      // Check 4-connected neighbors
-      const neighbors = [
-        {x: current.x + 1, y: current.y},
-        {x: current.x - 1, y: current.y},
-        {x: current.x, y: current.y + 1},
-        {x: current.x, y: current.y - 1}
-      ];
-      
-      for (const neighbor of neighbors) {
-        if (neighbor.x >= 0 && neighbor.x < width && 
-            neighbor.y >= 0 && neighbor.y < height) {
-          const neighborIdx = neighbor.y * width + neighbor.x;
-          if (!visited[neighborIdx] && !backgroundMask[neighborIdx]) {
-            visited[neighborIdx] = true;
-            queue.push(neighbor);
-          }
-        }
-      }
-    }
-    
-    // Consider it a large region if size is above threshold
-    return regionSize >= 100;
-  }
-  
-  // Ensure edges of the image are properly removed
-  function ensureEdgesRemoved(mask, width, height) {
-    const result = [...mask];
-    const edgeWidth = 5;
-    
-    // Mark all edge pixels as background
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        if (x < edgeWidth || x >= width - edgeWidth || 
-            y < edgeWidth || y >= height - edgeWidth) {
-          result[y * width + x] = true;
-        }
-      }
-    }
-    
-    return result;
-  }
-  
-  // Detect edges in the image
-  function detectEdges(imageData, width, height) {
-    const totalPixels = width * height;
-    const edges = new Array(totalPixels).fill(false);
-    
-    // Simple Sobel edge detection
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        const idx = y * width + x;
-        
-        // Get 3x3 neighborhood
-        const tl = getPixelBrightness(imageData, x-1, y-1, width);
-        const t = getPixelBrightness(imageData, x, y-1, width);
-        const tr = getPixelBrightness(imageData, x+1, y-1, width);
-        const l = getPixelBrightness(imageData, x-1, y, width);
-        const c = getPixelBrightness(imageData, x, y, width);
-        const r = getPixelBrightness(imageData, x+1, y, width);
-        const bl = getPixelBrightness(imageData, x-1, y+1, width);
-        const b = getPixelBrightness(imageData, x, y+1, width);
-        const br = getPixelBrightness(imageData, x+1, y+1, width);
-        
-        // Horizontal and vertical gradients
-        const gx = (tr + 2*r + br) - (tl + 2*l + bl);
-        const gy = (bl + 2*b + br) - (tl + 2*t + tr);
-        
-        // Gradient magnitude
-        const g = Math.sqrt(gx*gx + gy*gy);
-        
-        // Threshold for edge detection
-        if (g > 30) {
-          edges[idx] = true;
-        }
-      }
-    }
-    
-    return edges;
-  }
-  
-  // Get pixel brightness
-  function getPixelBrightness(imageData, x, y, width) {
-    const idx = (y * width + x) * 4;
-    return (imageData[idx] + imageData[idx+1] + imageData[idx+2]) / 3;
-  }
-  
-  // Flood fill from background regions
-  function floodFillBackground(definiteBackground, width, height) {
-    const result = [...definiteBackground];
-    const queue = [];
-    
-    // Start from the edges
-    for (let x = 0; x < width; x++) {
-      if (definiteBackground[x]) {
-        queue.push(x);
-      }
-      if (definiteBackground[(height-1) * width + x]) {
-        queue.push((height-1) * width + x);
-      }
-    }
-    
-    for (let y = 0; y < height; y++) {
-      if (definiteBackground[y * width]) {
-        queue.push(y * width);
-      }
-      if (definiteBackground[y * width + width - 1]) {
-        queue.push(y * width + width - 1);
-      }
-    }
-    
-    // BFS flood fill
-    while (queue.length > 0) {
-      const idx = queue.shift();
-      const x = idx % width;
-      const y = Math.floor(idx / width);
-      
-      // Check 4-connected neighbors
-      const neighbors = [
-        {x: x+1, y: y},
-        {x: x-1, y: y},
-        {x: x, y: y+1},
-        {x: x, y: y-1}
-      ];
-      
-      for (const neighbor of neighbors) {
-        if (neighbor.x >= 0 && neighbor.x < width && 
-            neighbor.y >= 0 && neighbor.y < height) {
-          const neighborIdx = neighbor.y * width + neighbor.x;
-          if (!result[neighborIdx]) {
-            result[neighborIdx] = true;
-            queue.push(neighborIdx);
-          }
-        }
-      }
-    }
-    
-    return result;
-  }
-  
-  // Check if a pixel has a neighbor in the given set
-  function hasNeighborInSet(idx, set, width, height) {
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    
-    // Check 8-connected neighbors
-    for (let dy = -1; dy <= 1; dy++) {
-      for (let dx = -1; dx <= 1; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        
-        const nx = x + dx;
-        const ny = y + dy;
-        
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          const neighborIdx = ny * width + nx;
-          if (set[neighborIdx]) {
-            return true;
-          }
-        }
-      }
-    }
-    
-    return false;
-  }
-  
-  // Check if a pixel is in a high contrast area (likely text)
-  function isHighContrastArea(idx, imageData, width, height) {
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    
-    // Get center pixel brightness
-    const centerBrightness = getPixelBrightness(imageData, x, y, width);
-    
-    // Check contrast with neighbors
-    let highContrastCount = 0;
-    
-    for (let dy = -2; dy <= 2; dy++) {
-      for (let dx = -2; dx <= 2; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        
-        const nx = x + dx;
-        const ny = y + dy;
-        
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          const neighborBrightness = getPixelBrightness(imageData, nx, ny, width);
-          const contrast = Math.abs(centerBrightness - neighborBrightness);
-          
-          if (contrast > 50) {
-            highContrastCount++;
-          }
-        }
-      }
-    }
-    
-    // If there are several high contrast neighbors, it's likely text
-    return highContrastCount >= 3;
-  }
-  
-  // Check if a pixel is part of a continuous region of similar brightness
-  function isPartOfContinuousRegion(idx, imageData, width, height, brightnessThreshold) {
-    const x = idx % width;
-    const y = Math.floor(idx / width);
-    
-    // Get center pixel brightness
-    const centerBrightness = getPixelBrightness(imageData, x, y, width);
-    
-    // If it's not bright enough, return false
-    if (centerBrightness < brightnessThreshold) {
-      return false;
-    }
-    
-    // Count similar brightness neighbors
-    let similarCount = 0;
-    let totalChecked = 0;
-    
-    for (let dy = -3; dy <= 3; dy++) {
-      for (let dx = -3; dx <= 3; dx++) {
-        if (dx === 0 && dy === 0) continue;
-        
-        const nx = x + dx;
-        const ny = y + dy;
-        
-        if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
-          totalChecked++;
-          const neighborBrightness = getPixelBrightness(imageData, nx, ny, width);
-          const diff = Math.abs(centerBrightness - neighborBrightness);
-          
-          if (diff < 30) {
-            similarCount++;
-          }
-        }
-      }
-    }
-    
-    // If most neighbors have similar brightness, it's part of a continuous region
-    return similarCount > totalChecked * 0.6;
-  }
-  
-  // Find connected regions in the mask
-  function findConnectedRegions(mask, width, height, targetValue) {
-    const visited = new Array(mask.length).fill(false);
-    const regions = [];
-    
-    for (let i = 0; i < mask.length; i++) {
-      if (!visited[i] && mask[i] === targetValue) {
-        // Start a new region
-        const region = {
-          pixels: [],
-          size: 0
-        };
-        
-        // BFS to find all connected pixels
-        const queue = [i];
-        visited[i] = true;
-        
-        while (queue.length > 0) {
-          const idx = queue.shift();
-          region.pixels.push(idx);
-          region.size++;
-          
-          const x = idx % width;
-          const y = Math.floor(idx / width);
-          
-          // Check 4-connected neighbors
-          const neighbors = [
-            {x: x+1, y: y},
-            {x: x-1, y: y},
-            {x: x, y: y+1},
-            {x: x, y: y-1}
-          ];
-          
-          for (const neighbor of neighbors) {
-            if (neighbor.x >= 0 && neighbor.x < width && 
-                neighbor.y >= 0 && neighbor.y < height) {
-              const neighborIdx = neighbor.y * width + neighbor.x;
-              if (!visited[neighborIdx] && mask[neighborIdx] === targetValue) {
-                visited[neighborIdx] = true;
-                queue.push(neighborIdx);
-              }
-            }
-          }
-        }
-        
-        regions.push(region);
-      }
-    }
-    
-    return regions;
-  }
-  
-  // Erosion operation
-  function erode(mask, width, height) {
-    const result = new Array(mask.length).fill(false);
-    
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        const idx = y * width + x;
-        
-        // Check 3x3 neighborhood
-        let allBackground = true;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const neighborIdx = (y + dy) * width + (x + dx);
-            if (!mask[neighborIdx]) {
-              allBackground = false;
-              break;
-            }
-          }
-          if (!allBackground) break;
-        }
-        
-        result[idx] = allBackground;
-      }
-    }
-    
-    return result;
-  }
-  
-  // Dilation operation
-  function dilate(mask, width, height) {
-    const result = [...mask];
-    
-    for (let y = 1; y < height - 1; y++) {
-      for (let x = 1; x < width - 1; x++) {
-        const idx = y * width + x;
-        
-        // Check 3x3 neighborhood
-        let anyBackground = false;
-        for (let dy = -1; dy <= 1; dy++) {
-          for (let dx = -1; dx <= 1; dx++) {
-            const neighborIdx = (y + dy) * width + (x + dx);
-            if (mask[neighborIdx]) {
-              anyBackground = true;
-              break;
-            }
-          }
-          if (anyBackground) break;
-        }
-        
-        result[idx] = anyBackground;
-      }
-    }
-    
-    return result;
-  }
-  
-  // Perceptually weighted color distance function
-  function perceptualColorDistance(color1, color2) {
-    // Convert RGB to Lab color space for perceptual distance
-    // This is a simplified approximation of CIEDE2000
-    
-    // Weights for RGB components based on human perception
-    const rWeight = 0.299;
-    const gWeight = 0.587;
-    const bWeight = 0.114;
-    
-    // Calculate weighted Euclidean distance
+  // Calculate Euclidean distance between two colors
+  function getColorDistance(color1, color2) {
     const rDiff = color1.r - color2.r;
     const gDiff = color1.g - color2.g;
     const bDiff = color1.b - color2.b;
     
-    return Math.sqrt(
-      rWeight * rDiff * rDiff +
-      gWeight * gDiff * gDiff +
-      bWeight * bDiff * bDiff
-    );
+    return Math.sqrt(rDiff * rDiff + gDiff * gDiff + bDiff * bDiff);
   }
   
-  // Helper function to get pixel color
-  function getPixelColor(data, x, y, width) {
-    const index = (y * width + x) * 4;
-    return {
-      r: data[index],
-      g: data[index + 1],
-      b: data[index + 2],
-      a: data[index + 3]
+  // Detect clothing and text in the image
+  function detectClothingAndText(mask, data, width, height) {
+    const totalPixels = width * height;
+    
+    // Detect high contrast areas (likely text)
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const i = y * width + x;
+        if (mask[i] === 0) continue; // Skip background
+        
+        const idx = i * 4;
+        const centerColor = {
+          r: data[idx],
+          g: data[idx + 1],
+          b: data[idx + 2]
+        };
+        
+        // Check contrast with neighbors
+        let highContrast = false;
+        
+        // Check 8-connected neighbors
+        for (let dy = -1; dy <= 1 && !highContrast; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            
+            const nx = x + dx;
+            const ny = y + dy;
+            
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            
+            const ni = ny * width + nx;
+            const nidx = ni * 4;
+            
+            const neighborColor = {
+              r: data[nidx],
+              g: data[nidx + 1],
+              b: data[nidx + 2]
+            };
+            
+            const contrast = getColorDistance(centerColor, neighborColor);
+            if (contrast > 60) { // High contrast threshold
+              highContrast = true;
+              break;
+            }
+          }
+        }
+        
+        if (highContrast) {
+          mask[i] = 3; // Definite foreground (text)
+          
+          // Mark surrounding pixels as probable foreground
+          for (let dy = -2; dy <= 2; dy++) {
+            for (let dx = -2; dx <= 2; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              
+              const nx = x + dx;
+              const ny = y + dy;
+              
+              if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+              
+              const ni = ny * width + nx;
+              if (mask[ni] !== 3) { // Don't downgrade definite foreground
+                mask[ni] = 2; // Probable foreground
+              }
+            }
+          }
+        }
+      }
+    }
+    
+    // Detect uniform color regions (likely clothing)
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        if (mask[i] === 0 || mask[i] === 3) continue; // Skip background and text
+        
+        if (isPartOfUniformRegion(data, x, y, width, height)) {
+          mask[i] = 3; // Definite foreground (clothing)
+        }
+      }
+    }
+    
+    // Connect foreground regions
+    connectForegroundRegions(mask, width, height);
+  }
+  
+  // Check if pixel is part of a uniform color region
+  function isPartOfUniformRegion(data, x, y, width, height) {
+    const idx = (y * width + x) * 4;
+    const centerColor = {
+      r: data[idx],
+      g: data[idx + 1],
+      b: data[idx + 2]
     };
+    
+    const radius = 5;
+    let similarCount = 0;
+    let totalChecked = 0;
+    
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        
+        const nx = x + dx;
+        const ny = y + dy;
+        
+        if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+        
+        const nidx = (ny * width + nx) * 4;
+        totalChecked++;
+        
+        const neighborColor = {
+          r: data[nidx],
+          g: data[nidx + 1],
+          b: data[nidx + 2]
+        };
+        
+        const colorDistance = getColorDistance(centerColor, neighborColor);
+        if (colorDistance < 20) { // Similar color threshold
+          similarCount++;
+        }
+      }
+    }
+    
+    // If more than 75% of neighbors have similar color, it's a uniform region
+    return totalChecked > 0 && similarCount / totalChecked > 0.75;
+  }
+  
+  // Connect foreground regions to avoid holes
+  function connectForegroundRegions(mask, width, height) {
+    const tempMask = new Uint8Array(mask);
+    
+    // Dilate definite foreground
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const i = y * width + x;
+        
+        if (tempMask[i] !== 3) continue; // Only dilate definite foreground
+        
+        // Mark 4-connected neighbors as foreground
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          
+          const ni = ny * width + nx;
+          if (tempMask[ni] !== 0) { // Don't convert definite background
+            mask[ni] = 2; // Probable foreground
+          }
+        }
+      }
+    }
+    
+    // Fill holes in foreground
+    fillHoles(mask, width, height);
+  }
+  
+  // Fill small holes in the foreground
+  function fillHoles(mask, width, height) {
+    const totalPixels = width * height;
+    const visited = new Uint8Array(totalPixels);
+    
+    // Find connected background regions
+    for (let i = 0; i < totalPixels; i++) {
+      if (visited[i] || mask[i] !== 0) continue;
+      
+      const region = [];
+      const queue = [i];
+      visited[i] = 1;
+      
+      let touchesEdge = false;
+      
+      while (queue.length > 0) {
+        const current = queue.shift();
+        region.push(current);
+        
+        const x = current % width;
+        const y = Math.floor(current / width);
+        
+        // Check if region touches the edge
+        if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+          touchesEdge = true;
+        }
+        
+        // Check 4-connected neighbors
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          
+          const ni = ny * width + nx;
+          
+          if (!visited[ni] && mask[ni] === 0) {
+            visited[ni] = 1;
+            queue.push(ni);
+          }
+        }
+      }
+      
+      // If region doesn't touch the edge and is small, fill it
+      if (!touchesEdge && region.length < 1000) {
+        for (const idx of region) {
+          mask[idx] = 2; // Convert to probable foreground
+        }
+      }
+    }
+  }
+  
+  // Refine segmentation using GrabCut-inspired approach
+  function refineSegmentation(mask, data, width, height) {
+    const totalPixels = width * height;
+    
+    // Build color models for foreground and background
+    const fgColors = [];
+    const bgColors = [];
+    
+    for (let i = 0; i < totalPixels; i++) {
+      const pixelIdx = i * 4;
+      const color = {
+        r: data[pixelIdx],
+        g: data[pixelIdx + 1],
+        b: data[pixelIdx + 2]
+      };
+      
+      if (mask[i] === 3) { // Definite foreground
+        fgColors.push(color);
+      } else if (mask[i] === 0) { // Definite background
+        bgColors.push(color);
+      }
+    }
+    
+    // Cluster foreground and background colors
+    const fgClusters = clusterColors(fgColors, 25, 10);
+    const bgClusters = clusterColors(bgColors, 25, 10);
+    
+    // Refine probable regions based on color models
+    for (let i = 0; i < totalPixels; i++) {
+      if (mask[i] !== 2) continue; // Only process probable regions
+      
+      const pixelIdx = i * 4;
+      const color = {
+        r: data[pixelIdx],
+        g: data[pixelIdx + 1],
+        b: data[pixelIdx + 2]
+      };
+      
+      // Find distance to nearest foreground and background cluster
+      let minFgDist = Infinity;
+      let minBgDist = Infinity;
+      
+      for (const cluster of fgClusters) {
+        const dist = getColorDistance(color, cluster);
+        minFgDist = Math.min(minFgDist, dist);
+      }
+      
+      for (const cluster of bgClusters) {
+        const dist = getColorDistance(color, cluster);
+        minBgDist = Math.min(minBgDist, dist);
+      }
+      
+      // Assign based on color similarity
+      if (minFgDist < minBgDist) {
+        mask[i] = 3; // Definite foreground
+      } else {
+        mask[i] = 0; // Definite background
+      }
+    }
+    
+    // Apply spatial coherence
+    applySpatialCoherence(mask, data, width, height);
+  }
+  
+  // Apply spatial coherence to ensure smooth regions
+  function applySpatialCoherence(mask, data, width, height) {
+    const tempMask = new Uint8Array(mask);
+    
+    // Smooth the mask using a voting scheme
+    for (let y = 1; y < height - 1; y++) {
+      for (let x = 1; x < width - 1; x++) {
+        const i = y * width + x;
+        
+        // Skip definite foreground and background
+        if (tempMask[i] === 3 || tempMask[i] === 0) continue;
+        
+        let fgCount = 0;
+        let bgCount = 0;
+        
+        // Count foreground and background neighbors
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            
+            const nx = x + dx;
+            const ny = y + dy;
+            
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            
+            const ni = ny * width + nx;
+            
+            if (tempMask[ni] === 3) {
+              fgCount++;
+            } else if (tempMask[ni] === 0) {
+              bgCount++;
+            }
+          }
+        }
+        
+        // Assign based on majority vote
+        if (fgCount > bgCount) {
+          mask[i] = 3; // Foreground
+        } else if (bgCount > fgCount) {
+          mask[i] = 0; // Background
+        } else {
+          // If tied, use color similarity
+          const pixelIdx = i * 4;
+          const color = {
+            r: data[pixelIdx],
+            g: data[pixelIdx + 1],
+            b: data[pixelIdx + 2]
+          };
+          
+          let fgSimilarity = 0;
+          let bgSimilarity = 0;
+          
+          // Calculate color similarity to neighbors
+          for (let dy = -1; dy <= 1; dy++) {
+            for (let dx = -1; dx <= 1; dx++) {
+              if (dx === 0 && dy === 0) continue;
+              
+              const nx = x + dx;
+              const ny = y + dy;
+              
+              if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+              
+              const ni = ny * width + nx;
+              const nidx = ni * 4;
+              
+              const neighborColor = {
+                r: data[nidx],
+                g: data[nidx + 1],
+                b: data[nidx + 2]
+              };
+              
+              const similarity = 255 - getColorDistance(color, neighborColor);
+              
+              if (tempMask[ni] === 3) {
+                fgSimilarity += similarity;
+              } else if (tempMask[ni] === 0) {
+                bgSimilarity += similarity;
+              }
+            }
+          }
+          
+          if (fgSimilarity > bgSimilarity) {
+            mask[i] = 3; // Foreground
+          } else {
+            mask[i] = 0; // Background
+          }
+        }
+      }
+    }
+  }
+  
+  // Apply the mask to the image
+  function applyMaskToImage(mask, data, width, height) {
+    const totalPixels = width * height;
+    
+    for (let i = 0; i < totalPixels; i++) {
+      const pixelIdx = i * 4;
+      
+      if (mask[i] === 0) { // Background
+        data[pixelIdx + 3] = 0; // Make transparent
+      }
+    }
+  }
+  
+  // Post-process the result for clean edges
+  function postProcessResult(data, width, height) {
+    const totalPixels = width * height;
+    
+    // Create a binary mask of transparent pixels
+    const transparentMask = new Uint8Array(totalPixels);
+    for (let i = 0; i < totalPixels; i++) {
+      transparentMask[i] = data[i * 4 + 3] === 0 ? 1 : 0;
+    }
+    
+    // Remove small transparent and opaque regions
+    removeSmallRegions(transparentMask, data, width, height);
+    
+    // Smooth edges
+    smoothEdges(data, width, height);
+  }
+  
+  // Remove small regions for cleaner result
+  function removeSmallRegions(transparentMask, data, width, height) {
+    const totalPixels = width * height;
+    const visited = new Uint8Array(totalPixels);
+    
+    // Find and process small transparent regions
+    for (let i = 0; i < totalPixels; i++) {
+      if (visited[i]) continue;
+      
+      const isTransparent = transparentMask[i] === 1;
+      
+      // Find connected region
+      const region = [];
+      const queue = [i];
+      visited[i] = 1;
+      
+      let touchesEdge = false;
+      
+      while (queue.length > 0) {
+        const current = queue.shift();
+        region.push(current);
+        
+        const x = current % width;
+        const y = Math.floor(current / width);
+        
+        // Check if region touches the edge
+        if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+          touchesEdge = true;
+        }
+        
+        // Check 4-connected neighbors
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          const nx = x + dx;
+          const ny = y + dy;
+          
+          if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+          
+          const ni = ny * width + nx;
+          
+          if (!visited[ni] && transparentMask[ni] === (isTransparent ? 1 : 0)) {
+            visited[ni] = 1;
+            queue.push(ni);
+          }
+        }
+      }
+      
+      // Process small regions
+      const threshold = isTransparent ? 200 : 100; // Different thresholds for transparent and opaque
+      
+      if (!touchesEdge && region.length < threshold) {
+        for (const idx of region) {
+          const pixelIdx = idx * 4;
+          if (isTransparent) {
+            // Small transparent region -> make opaque
+            data[pixelIdx + 3] = 255;
+          } else {
+            // Small opaque region -> make transparent
+            data[pixelIdx + 3] = 0;
+          }
+        }
+      }
+    }
+  }
+  
+  // Smooth edges for a more natural look
+  function smoothEdges(data, width, height) {
+    const totalPixels = width * height;
+    const tempAlpha = new Uint8Array(totalPixels);
+    
+    // Copy alpha channel
+    for (let i = 0; i < totalPixels; i++) {
+      tempAlpha[i] = data[i * 4 + 3];
+    }
+    
+    // Apply box blur to alpha channel at edges
+    const radius = 1;
+    
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        
+        // Only process edge pixels
+        let isEdge = false;
+        
+        // Check if this pixel is at the edge of transparency
+        for (let dy = -1; dy <= 1 && !isEdge; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) continue;
+            
+            const nx = x + dx;
+            const ny = y + dy;
+            
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            
+            const ni = ny * width + nx;
+            
+            // If neighbor has different transparency, this is an edge
+            if ((tempAlpha[i] === 0 && tempAlpha[ni] > 0) || 
+                (tempAlpha[i] > 0 && tempAlpha[ni] === 0)) {
+              isEdge = true;
+              break;
+            }
+          }
+        }
+        
+        // If not an edge pixel, skip
+        if (!isEdge) continue;
+        
+        // Apply blur to edge pixel
+        let sum = 0;
+        let count = 0;
+        
+        for (let dy = -radius; dy <= radius; dy++) {
+          for (let dx = -radius; dx <= radius; dx++) {
+            const nx = x + dx;
+            const ny = y + dy;
+            
+            if (nx < 0 || nx >= width || ny < 0 || ny >= height) continue;
+            
+            const ni = ny * width + nx;
+            sum += tempAlpha[ni];
+            count++;
+          }
+        }
+        
+        // Update alpha with blurred value
+        data[i * 4 + 3] = Math.round(sum / count);
+      }
+    }
   }
   
   // Set magic brush mode
@@ -1444,7 +1327,7 @@ function init() {
         hideLoading();
         showToast('Failed to blur background', 'error');
       }
-    }, 1000);
+    }, 500);
   }
   
   // Update the edited image in our images array
